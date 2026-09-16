@@ -1,13 +1,15 @@
 // =========================================================================
-// CADERNO DE CINEMÁTICA – PROF. ANDRÉ (V8.2 – SIMULADO OFICIAL)
+// CADERNO DE CINEMÁTICA – PROF. ANDRÉ (V8.8 – SIMULADO OFICIAL)
 // =========================================================================
-// • Base herdada da V8.1 (NTP + timestamps absolutos + revalidação)
+// • Base herdada da V8.2 (NTP + timestamps absolutos + revalidação)
 // • [V8.2] Zoom afeta APENAS o texto do enunciado (--enunciado-scale)
 // • [V8.2] Absorção de sobra na etapa de revisão (não descarta tempo)
 // • [V8.2] Modo tela cheia durante a prova (body.prova-ativa)
 // • [V8.2] Contador ao vivo no preview (modo sala)
 // • [V8.2] Grid 3 colunas na revisão (modo-revisao)
 // • [V8.2] Impressão em PDF só do gabarito
+// • [V8.8] Proporção 8/10/12 preservada; NUNCA iguala tempos.
+// • [V8.8] Redução em blocos de 3 min → 1 min por questão.
 // • Banco de exercícios INTACTO
 // =========================================================================
 
@@ -96,6 +98,7 @@ function detectarEMigrarDados() {
           provaFinalizada: antigo.provaFinalizada || false,
           provaTempo: antigo.provaTempo || 0,
           zoomLevel: 1.0,
+          eqZoomLevel: 1.0,
           avaliacao: {
             semente: null,
             questoesIds: [],
@@ -129,9 +132,8 @@ const ESTADO_PADRAO = {
   provaQuestoes: [],
   provaFinalizada: false,
   provaTempo: 0,
-  // [V8.2] Zoom agora começa em 100% (afeta só o enunciado)
   zoomLevel: 1.0,
-  eqZoomLevel: 1.0, // [V8.7] zoom independente das equações
+  eqZoomLevel: 1.0,
   avaliacao: {
     semente: null,
     questoesIds: [],
@@ -151,6 +153,7 @@ function carregarStorage() {
     if (!ESTADO.avaliacao) ESTADO.avaliacao = { ...ESTADO_PADRAO.avaliacao };
     if (!ESTADO.avaliacao.modoProva) ESTADO.avaliacao.modoProva = 'simulado';
     if (ESTADO.zoomLevel === undefined) ESTADO.zoomLevel = 1.0;
+    if (ESTADO.eqZoomLevel === undefined) ESTADO.eqZoomLevel = 1.0;
   } else {
     ESTADO = JSON.parse(JSON.stringify(ESTADO_PADRAO));
   }
@@ -697,7 +700,6 @@ function alternarDicaFase(questId, faseNum) {
 window.alternarDicaFase = alternarDicaFase;
 
 // ===== 11. SISTEMA DE ZOOM (APENAS ENUNCIADO) =====
-// [V8.2] Antes afetava --font-scale (tudo). Agora afeta --enunciado-scale.
 let zoomTimeout = null;
 
 function aplicarZoom(nivel) {
@@ -709,7 +711,6 @@ function aplicarZoom(nivel) {
   reiniciarTimerOcultacaoZoom();
 }
 
-// [V8.7] Zoom exclusivo das equações do drawer lateral
 function aplicarZoomEquacoes(nivel) {
   const scale = Math.max(0.8, Math.min(1.8, nivel));
   ESTADO.eqZoomLevel = scale;
@@ -722,7 +723,6 @@ function aplicarZoomEquacoes(nivel) {
 function atualizarIndicadorZoom() {
   const indicador = document.getElementById('zoom-indicador');
   if (indicador) indicador.textContent = `${Math.round(ESTADO.zoomLevel * 100)}%`;
-  // [V8.3] sincroniza o indicador do controle dentro da prova
   const indicadorProva = document.getElementById('zoom-prova-indicador');
   if (indicadorProva) indicadorProva.textContent = `${Math.round(ESTADO.zoomLevel * 100)}%`;
 }
@@ -751,7 +751,6 @@ function iniciarControlesZoom() {
     controles.addEventListener('mouseleave', reiniciarTimerOcultacaoZoom);
     controles.addEventListener('click', reiniciarTimerOcultacaoZoom);
   }
-  // [V8.2] Default: 1.0 (100%)
   aplicarZoom(ESTADO.zoomLevel || 1.0);
 }
 
@@ -812,7 +811,7 @@ function formatarSegundos(s) {
 }
 window.formatarSegundos = formatarSegundos;
 
-// [V8.2] Absorve sobra de tempo na etapa de revisão em vez de descartar.
+// [V8.8] Proporção 8/10/12 sempre preservada; redução em blocos de 3 min.
 function calcularProvaSala() {
   const agora = agoraSincronizado();
   const segAtual = agora.getHours() * 3600 + agora.getMinutes() * 60 + agora.getSeconds();
@@ -845,7 +844,7 @@ function calcularProvaSala() {
 
   const MINIMO_VIAVEL = 10 * 60;
   const ALERTA_MAXIMO = 15 * 60;
-  const TEMPO_PADRAO  = 30 * 60;
+  const TEMPO_PADRAO  = 30 * 60; // 8 + 10 + 12 = 30 min
 
   const infoBase = {
     aula: proximaAula,
@@ -870,34 +869,39 @@ function calcularProvaSala() {
       mensagem: '⚠️ Aula curta: prova reduzida para 2 questões (Fácil + Média).' };
   }
 
+  // [V8.8] CASO 2: atraso agudo (tempoTotal < 30 min) → reduz 1 min por questão a cada 3 min de déficit.
+  // Bloco parcial conta como cheio (ceil). Resíduo SEMPRE vai para revisão.
   if (tempoTotal < TEMPO_PADRAO) {
-    const deficit = TEMPO_PADRAO - tempoTotal;
-    const reducaoPorQuestao = Math.ceil(deficit / 3);
+    const deficitSeg        = TEMPO_PADRAO - tempoTotal;
+    const reducaoPorQuestao = Math.ceil(deficitSeg / 180) * 60; // 180s = 3 min → 60s por questão
+
     const etapas = [
       { nivel: 'facil',   tempo: Math.max(60, 8  * 60 - reducaoPorQuestao) },
       { nivel: 'medio',   tempo: Math.max(60, 10 * 60 - reducaoPorQuestao) },
       { nivel: 'dificil', tempo: Math.max(60, 12 * 60 - reducaoPorQuestao) }
     ];
-    // [V8.2] Absorve sobra real na revisão
+
     const somaEtapas = etapas.reduce((a, e) => a + e.tempo, 0);
     const sobraFinal = tempoTotal - somaEtapas;
-    if (sobraFinal > 30) etapas.push({ nivel: 'revisao', tempo: sobraFinal });
+    if (sobraFinal > 0) {
+      etapas.push({ nivel: 'revisao', tempo: sobraFinal });
+    }
 
+    const reducaoMin = Math.round(reducaoPorQuestao / 60);
     return { ...infoBase, valido: true, modo: 'penalidade_proporcional', etapas,
-      mensagem: `⏱️ Penalidade por atraso: ${reducaoPorQuestao}s a menos por questão.` };
+      mensagem: `⏱️ Atraso detectado: ${reducaoMin} min a menos por questão.` };
   }
 
-  // [V8.2] Caso padrão: absorve QUALQUER sobra na revisão
+  // [V8.8] CASO 3: padrão (tempoTotal ≥ 30 min).
+  // 8/10/12 fixos + TODA a sobra (mesmo 1s) vira etapa de revisão.
   const sobraRevisao = tempoTotal - TEMPO_PADRAO;
   const etapas = [
     { nivel: 'facil',   tempo: 8  * 60 },
     { nivel: 'medio',   tempo: 10 * 60 },
     { nivel: 'dificil', tempo: 12 * 60 }
   ];
-  if (sobraRevisao > 30) {
+  if (sobraRevisao > 0) {
     etapas.push({ nivel: 'revisao', tempo: sobraRevisao });
-  } else if (sobraRevisao > 0) {
-    etapas[etapas.length - 1].tempo += sobraRevisao;
   }
 
   return { ...infoBase, valido: true, modo: 'padrao', etapas, mensagem: '' };
@@ -992,7 +996,7 @@ function atualizarBarraTopo() {
       btnAbaProva.title = "Simulado liberado! Clique para iniciar.";
     } else {
       btnAbaProva.classList.add('bloqueada');
-      btnAbaProva.textContent = `🔒 SIMULADO (${kitsConcluidos}/6 Kits)`;
+      btnAbaProva.textContent = `🔒 SIMULADO (${kitsCompletos}/6 Kits)`;
       btnAbaProva.title = "Conclua os 6 kits de treinamento para destravar o simulado.";
     }
   }
@@ -1016,7 +1020,7 @@ function renderizarMuralMedalhas() {
 function renderizarQuadroEquacoes() {
   const painel = document.getElementById('painel-equacoes');
   const painelOverlay = document.getElementById('painel-equacoes-overlay');
-  const painelProva = document.getElementById('painel-equacoes-prova-conteudo'); // [V8.5]
+  const painelProva = document.getElementById('painel-equacoes-prova-conteudo');
   if (!painel) return;
 
   const htmlFormulas = DATABASE_EQUACOES.map(eq =>
@@ -1025,11 +1029,11 @@ function renderizarQuadroEquacoes() {
 
   painel.innerHTML = htmlFormulas;
   if (painelOverlay) painelOverlay.innerHTML = htmlFormulas;
-  if (painelProva) painelProva.innerHTML = htmlFormulas; // [V8.5]
+  if (painelProva) painelProva.innerHTML = htmlFormulas;
 
   garantirRenderizacaoLatex(painel);
   if (painelOverlay) garantirRenderizacaoLatex(painelOverlay);
-  if (painelProva) garantirRenderizacaoLatex(painelProva); // [V8.5]
+  if (painelProva) garantirRenderizacaoLatex(painelProva);
 }
 
 function renderizarAbaAtual() {
@@ -1175,7 +1179,6 @@ function renderizarPainelCertificado() {
 }
 
 // ===== 17. PROVA / SIMULADO =====
-// [V8.2] Adiciona body.prova-ativa quando em execução
 function renderizarPainelProvaSimulado() {
   const pBloqueio = document.getElementById('painel-bloqueio-prova');
   const pPre = document.getElementById('painel-pre-prova');
@@ -1293,7 +1296,6 @@ function executarSorteioAvaliacao() {
   }
 }
 
-// [V8.2] Painel de diretrizes + contador ao vivo
 function montarPainelInfoSala(container, resultadoSala) {
   let painelInfo = document.getElementById('preview-info-sala');
   if (!painelInfo) {
@@ -1321,7 +1323,6 @@ function montarPainelInfoSala(container, resultadoSala) {
       </div>
     </div>`;
 
-  // [V8.2] Contador ao vivo
   if (window._timerPreviewSala) clearInterval(window._timerPreviewSala);
   window._timerPreviewSala = setInterval(() => {
     const modal = document.getElementById('modal-preview-sorteio');
@@ -1364,7 +1365,6 @@ function abrirPreviewSorteio(modo, resultadoSala) {
   };
 
   document.getElementById('btn-confirmar-inicio').onclick = () => {
-    // [V8.2] limpa timer do preview
     if (window._timerPreviewSala) { clearInterval(window._timerPreviewSala); window._timerPreviewSala = null; }
 
     if (modo === 'sala') {
@@ -1428,23 +1428,12 @@ function iniciarProvaComSeed(seed, modo, resultadoSala) {
     fechamentoProvaTimestamp = null;
   }
 
-  if (fechamentoProvaTimestamp) {
-    const somaEtapas = etapasProvaAtual.reduce((acc, e) => acc + e.tempo, 0);
-    const restanteReal = Math.max(
-      0,
-      Math.floor((fechamentoProvaTimestamp - agoraSincronizado().getTime()) / 1000)
-    );
-    if (somaEtapas > restanteReal && etapasProvaAtual.length > 0) {
-      const n = etapasProvaAtual.length;
-      const base  = Math.floor(restanteReal / n);
-      const resto = restanteReal - base * n;
-      etapasProvaAtual = etapasProvaAtual.map((e, i) => ({
-        ...e,
-        tempo: Math.max(30, base + (i < resto ? 1 : 0))
-      }));
-      console.warn('⚠️ Etapas redistribuídas. Soma original:', somaEtapas, '| Tempo real:', restanteReal);
-    }
-  }
+  // [V8.8] REMOVIDO o bloco que redistribuía os tempos por igual entre as etapas.
+  // Motivo: ao abrir o preview em T0 e confirmar em T1, `restanteReal` ficava
+  // levemente menor que `somaEtapas`, e o código antigo dividia o tempo
+  // igualitariamente, destruindo a proporção 8/10/12.
+  // A revalidação já é feita no clique (via calcularProvaSala), então
+  // `etapasProvaAtual` já está proporcional e atualizada. Nada a corrigir aqui.
 
   indiceEtapaAtual = 0;
   tempoRestanteEtapa = etapasProvaAtual[0].tempo;
@@ -1536,8 +1525,6 @@ function adicionarTempoExtra(minutos) {
 }
 window.adicionarTempoExtra = adicionarTempoExtra;
 
-// [V8.4] BOTÃO DE TESTE: zera o cronômetro e avança imediatamente para a próxima etapa.
-// Ignora o vínculo com o sinal NTP — útil apenas para validar transições.
 function pularTempo() {
   if (!ESTADO.avaliacao || !etapasProvaAtual.length) return;
   const etapaOrigem = etapasProvaAtual[indiceEtapaAtual]?.nivel || '—';
@@ -1555,7 +1542,6 @@ function finalizarAvaliacaoDefinitiva() {
   renderizarPainelProvaSimulado();
 }
 
-// [V8.2] adiciona classe modo-revisao no container + compacto nos cards
 function atualizarInterfaceAvaliacao() {
   const av = ESTADO.avaliacao;
   const tagSemente = document.getElementById('tag-semente-prova');
@@ -1586,7 +1572,6 @@ function atualizarInterfaceAvaliacao() {
     revisao: `🟣 <strong>ETAPA FINAL — REVISÃO GERAL</strong> (Todas as questões visíveis • ${formatarSegundos(tempoMaximoEtapa)})`
   };
 
-    // [V8.5] Injeta o pull-tab de equações dentro do banner
   if (bannerEtapa) {
     bannerEtapa.innerHTML = `
       <span class="banner-texto">${banners[nivelAtual] || banners.facil}</span>
@@ -1612,7 +1597,6 @@ function atualizarInterfaceAvaliacao() {
   atualizarVisorTempoAvaliacao();
 }
 
-// [V8.2] aceita parâmetro "compacto" e remove font-size inline
 function renderizarQuestaoCardSimulado(q, container, num, label, compacto = false) {
   if (!q) return;
   const card = document.createElement('article');
@@ -1969,7 +1953,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // [V8.2] Botão de imprimir gabarito
   const btnImprimirGab = document.getElementById('btn-imprimir-gabarito');
   if (btnImprimirGab) {
     btnImprimirGab.addEventListener('click', () => {
@@ -1982,17 +1965,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // [V8.3] Zoom exclusivo da prova — apenas o enunciado
   const btnZoomProvaIn = document.getElementById('btn-zoom-prova-in');
   const btnZoomProvaOut = document.getElementById('btn-zoom-prova-out');
   if (btnZoomProvaIn) btnZoomProvaIn.addEventListener('click', () => aplicarZoom(ESTADO.zoomLevel + 0.1));
   if (btnZoomProvaOut) btnZoomProvaOut.addEventListener('click', () => aplicarZoom(ESTADO.zoomLevel - 0.1));
 
-  // [V8.4] Botão de teste: pular etapa
   const btnPularTempo = document.getElementById('btn-pular-tempo');
   if (btnPularTempo) btnPularTempo.addEventListener('click', pularTempo);
 
-  // [V8.5] Drawer lateral de equações (delegação de evento)
   document.addEventListener('click', (e) => {
     if (e.target.closest('#aba-equacoes-prova')) {
       const drawer = document.getElementById('painel-equacoes-prova');
@@ -2004,7 +1984,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // [V8.5] Fecha o drawer automaticamente ao sair do modo prova
   const observer = new MutationObserver(() => {
     if (!document.body.classList.contains('prova-ativa')) {
       const drawer = document.getElementById('painel-equacoes-prova');
@@ -2013,12 +1992,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-  // [V8.7] Zoom das equações
   const btnZoomEqIn = document.getElementById('btn-zoom-eq-in');
   const btnZoomEqOut = document.getElementById('btn-zoom-eq-out');
   if (btnZoomEqIn) btnZoomEqIn.addEventListener('click', () => aplicarZoomEquacoes(ESTADO.eqZoomLevel + 0.1));
   if (btnZoomEqOut) btnZoomEqOut.addEventListener('click', () => aplicarZoomEquacoes(ESTADO.eqZoomLevel - 0.1));
-  // Inicializa com o valor salvo
   aplicarZoomEquacoes(ESTADO.eqZoomLevel || 1.0);
 
   renderizarTudo();
