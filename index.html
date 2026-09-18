@@ -229,12 +229,17 @@
       </div>
 
       <div class="card oculto" id="painel-execucao-prova">
-        <div class="cabecalho-avaliacao-ativo">
-          <div>
-            <span class="tag-semente-prova" id="tag-semente-prova">Sorteio #000</span>
-            <span style="font-weight:bold; color:#495057;" id="tag-aluno-prova">Aluno: ---</span>
-          </div>
-        </div>
+		<div class="cabecalho-avaliacao-ativo">
+		  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+			<span class="tag-semente-prova" id="tag-semente-prova">Sorteio #000</span>
+			<span style="font-weight:bold; color:#495057;" id="tag-aluno-prova">Aluno: ---</span>
+			<!-- NOVO: relógio NTP inline, à esquerda, logo após o nome -->
+			<span class="relogio-ntp-prova" id="relogio-ntp-prova" aria-label="Relógio NTP">
+			  <span class="relogio-ntp-data" id="relogio-ntp-data">--/--/--</span>
+			  <span class="relogio-ntp-hora" id="relogio-ntp-hora">--:--:--</span>
+			</span>
+		  </div>
+		</div>
 
         <div class="barra-tempo-trilha">
           <div class="barra-tempo-preenchimento" id="barra-tempo-preenchimento" style="width:100%"></div>

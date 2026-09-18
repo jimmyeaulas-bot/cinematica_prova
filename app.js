@@ -791,6 +791,33 @@ function agoraSincronizado() {
   return new Date(Date.now() + OFFSET_NTP_MS);
 }
 
+// ===== 12b. RELÓGIO NTP DIGITAL DA PROVA =====
+function atualizarRelogioNTP() {
+  const agora = agoraSincronizado();
+  const dd = String(agora.getDate()).padStart(2, '0');
+  const mm = String(agora.getMonth() + 1).padStart(2, '0');
+  const aa = String(agora.getFullYear()).slice(-2);
+  const hh = String(agora.getHours()).padStart(2, '0');
+  const mi = String(agora.getMinutes()).padStart(2, '0');
+  const ss = String(agora.getSeconds()).padStart(2, '0');
+  const elData = document.getElementById('relogio-ntp-data');
+  const elHora = document.getElementById('relogio-ntp-hora');
+  if (elData) elData.textContent = `${dd}/${mm}/${aa}`;
+  if (elHora) elHora.textContent = `${hh}:${mi}:${ss}`;
+}
+
+function iniciarRelogioNTP() {
+  if (relogioProvaInterval) clearInterval(relogioProvaInterval);
+  atualizarRelogioNTP();
+  relogioProvaInterval = setInterval(atualizarRelogioNTP, 1000);
+  // Tenta NTP em background (não bloqueia) se ainda não sincronizou
+  if (!NTP_SINCRONIZADO) { sincronizarNTP(); }
+}
+
+function pararRelogioNTP() {
+  if (relogioProvaInterval) { clearInterval(relogioProvaInterval); relogioProvaInterval = null; }
+}
+
 // ===== 13. CÁLCULO DE TEMPO POR HORÁRIO DE AULA =====
 function horaParaSegundos(horaStr) {
   const [h, m] = horaStr.split(':').map(Number);
@@ -931,6 +958,8 @@ let indiceEtapaAtual = 0;
 let tempoRestanteEtapa = 0;
 let tempoMaximoEtapa = 0;
 let fechamentoProvaTimestamp = null;
+let dicasAtivasProva = false;
+let relogioProvaInterval = null;
 
 // ===== 16. RENDERIZAÇÃO GERAL =====
 function renderizarTudo() {
@@ -1038,6 +1067,7 @@ function renderizarQuadroEquacoes() {
 
 function renderizarAbaAtual() {
   const kitId = ESTADO.kitAtivo;
+  if (kitId !== 'prova') pararRelogioNTP();
   const secKit = document.getElementById('conteudo-kit');
   const secCert = document.getElementById('secao-certificado');
   const secProva = document.getElementById('secao-prova');
@@ -1224,14 +1254,14 @@ function atualizarInfoModoSala() {
   const radios = document.querySelectorAll('input[name="modo-prova"]');
   const infoSala = document.getElementById('info-modo-sala');
   radios.forEach(radio => {
-    radio.addEventListener('change', () => {
+    radio.onchange = () => {                       // <-- substituição idempotente
       if (radio.value === 'sala' && radio.checked) {
         infoSala.classList.remove('oculto');
         calcularEExibirInfoSala();
       } else {
         infoSala.classList.add('oculto');
       }
-    });
+    };
   });
 }
 
@@ -1400,6 +1430,7 @@ function abrirPreviewSorteio(modo, resultadoSala) {
 }
 
 function iniciarProvaComSeed(seed, modo, resultadoSala) {
+  dicasAtivasProva = false;   // <-- NOVO
   const sorteio = sortearComSeed(seed);
   const av = ESTADO.avaliacao;
   av.semente = seed;
@@ -1448,6 +1479,7 @@ function iniciarProvaComSeed(seed, modo, resultadoSala) {
 // ===== 19. TEMPORIZADOR =====
 function iniciarTemporizadorAvaliacao() {
   if (timerAvaliacao) clearInterval(timerAvaliacao);
+  iniciarRelogioNTP();          // <-- NOVO
   atualizarInterfaceAvaliacao();
 
   timerAvaliacao = setInterval(() => {
@@ -1491,6 +1523,7 @@ function avancarProximaEtapaAvaliacao() {
 
 function finalizarProvaPorSinal() {
   if (timerAvaliacao) { clearInterval(timerAvaliacao); timerAvaliacao = null; }
+  pararRelogioNTP();            // <-- NOVO
   ESTADO.avaliacao.etapaAtual = 'fim';
   document.body.classList.remove('prova-ativa');
   salvarStorage();
@@ -1501,19 +1534,20 @@ function mostrarTelaFimDeProvaSala() {
   const pExec = document.getElementById('painel-execucao-prova');
   const pFim = document.getElementById('painel-fim-prova');
   if (pExec) pExec.classList.add('oculto');
-  if (pFim) {
-    pFim.classList.remove('oculto');
-    const titulo = pFim.querySelector('.titulo-fim-prova');
-    if (titulo) titulo.textContent = 'FIM DE PROVA';
-    const subtitulo = pFim.querySelector('p');
-    if (subtitulo) subtitulo.textContent = 'O tempo da aula terminou. Entregue sua prova ao professor.';
-    const btnGab = document.getElementById('btn-ver-gabarito-simulado');
-    if (btnGab) btnGab.style.display = 'none';
-    const btnNovo = document.getElementById('btn-novo-simulado');
-    if (btnNovo) btnNovo.style.display = 'none';
-    const btnImp = document.getElementById('btn-imprimir-gabarito');
-    if (btnImp) btnImp.style.display = 'none';
+  if (!pFim) return;
+
+  pFim.classList.remove('oculto');
+
+  // Ajusta textos por ser fim "por sinal"
+  const titulo = pFim.querySelector('.titulo-fim-prova');
+  if (titulo) titulo.textContent = 'FIM DE PROVA';
+  const subtitulo = pFim.querySelector('p');
+  if (subtitulo) {
+    subtitulo.textContent = 'O tempo da aula terminou. Você ainda pode conferir o gabarito ou baixar o PDF.';
   }
+
+  // Reaproveita TODA a configuração de botões do encerramento manual
+  exibirFimDeProva();
 }
 
 function adicionarTempoExtra(minutos) {
@@ -1536,6 +1570,7 @@ window.pularTempo = pularTempo;
 
 function finalizarAvaliacaoDefinitiva() {
   if (timerAvaliacao) { clearInterval(timerAvaliacao); timerAvaliacao = null; }
+  pararRelogioNTP();            // <-- NOVO
   ESTADO.avaliacao.etapaAtual = 'fim';
   document.body.classList.remove('prova-ativa');
   salvarStorage();
@@ -1572,12 +1607,18 @@ function atualizarInterfaceAvaliacao() {
     revisao: `🟣 <strong>ETAPA FINAL — REVISÃO GERAL</strong> (Todas as questões visíveis • ${formatarSegundos(tempoMaximoEtapa)})`
   };
 
-  if (bannerEtapa) {
-    bannerEtapa.innerHTML = `
-      <span class="banner-texto">${banners[nivelAtual] || banners.facil}</span>
+if (bannerEtapa) {
+  bannerEtapa.innerHTML = `
+    <span class="banner-texto">${banners[nivelAtual] || banners.facil}</span>
+    <div class="acoes-banner-prova">
+      <button type="button"
+              class="aba-dicas-prova ${dicasAtivasProva ? 'ativa' : ''}"
+              id="aba-dicas-prova"
+              title="${dicasAtivasProva ? 'Ocultar dicas no enunciado' : 'Mostrar dicas: destacar valores e palavras-chave'}">❓</button>
       <button type="button" class="aba-equacoes-prova" id="aba-equacoes-prova" title="Abrir quadro de equações">📐</button>
-    `;
-  }
+    </div>
+  `;
+}
 
   if (nivelAtual === 'revisao') {
     if (painelExtra) painelExtra.classList.remove('oculto');
@@ -1601,13 +1642,18 @@ function renderizarQuestaoCardSimulado(q, container, num, label, compacto = fals
   if (!q) return;
   const card = document.createElement('article');
   card.className = "questao-card" + (compacto ? " questao-compacta" : "");
+  
+  // NOVA LINHA ADICIONADA: verifica se as dicas estão ativas
+  const enunciadoRender = dicasAtivasProva ? aplicarDicas(q.enunciado) : q.enunciado;
+  
   card.innerHTML = `
     <div class="card-cabecalho">
       <span class="num-q">${num}</span>
       <span class="tag-nivel ${q.tipo}">${label}</span>
       <span style="font-family:'Fira Code', monospace; color:#868e96; font-size:0.85rem;">ID: ${q.id}</span>
     </div>
-    <div class="enunciado">${q.enunciado}</div>
+    <!-- AQUI MUDAMOS: agora usa enunciadoRender em vez de q.enunciado -->
+    <div class="enunciado">${enunciadoRender}</div>
     ${compacto ? '' : '<div class="postit">✍️ <strong>Resolução no Caderno:</strong> Estruture: <strong>I. Dados</strong> • <strong>II. Equação</strong> • <strong>III. Resolução</strong>.</div>'}
   `;
   container.appendChild(card);
@@ -1627,7 +1673,9 @@ function exibirFimDeProva() {
   const btnNovo = document.getElementById('btn-novo-simulado');
   const btnGab = document.getElementById('btn-ver-gabarito-simulado');
   const boxGab = document.getElementById('gabarito-pos-prova');
-
+  const btnImp = document.getElementById('btn-imprimir-gabarito');
+  
+  if (btnImp) btnImp.style.display = '';
   if (folhaNome) folhaNome.textContent = ESTADO.nomeAluno.trim() || 'Estudante';
   if (folhaData) folhaData.textContent = new Date().toLocaleDateString('pt-BR');
   if (btnNovo) {
@@ -1648,6 +1696,76 @@ function exibirFimDeProva() {
       garantirRenderizacaoLatex(boxGab);
     };
   }
+}
+
+// ===== 19b. GRIFOS DE DICAS NO ENUNCIADO =====
+
+const PALAVRAS_CHAVE_DICA = [
+  'parte do repouso', 'partindo do repouso',
+  'repouso', 'parado',
+  'até parar', 'até a parada', 'para completamente',
+  'uniformemente', 'uniforme', 'constante',
+  'mesmo sentido', 'sentido oposto', 'sentidos opostos',
+  'ao encontro', 'alcançará', 'alcança',
+  'colisão', 'cruzamento',
+  'linha reta', 'retilínea',
+  // Aceleração / desaceleração — verbos e substantivo
+  'desaceleração', 'desacelerando', 'desacelerar', 'desacelera',
+  'aceleração', 'acelerando', 'acelerar', 'acelera'
+].sort((a, b) => b.length - a.length);
+
+const RE_CHAVE_STR =
+  '(?<![\\wÀ-ÿ])(?:' +
+  PALAVRAS_CHAVE_DICA.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') +
+  ')(?![\\wÀ-ÿ])';
+
+const RE_VALOR_STR = '\\$[^$\\n]*\\d[^$\\n]*\\$';
+
+const RE_INCOGNITA_STR = [
+  // "Qual [será] [a/o] [sua] <quantidade>"
+  '\\b[Qq]ual(?:is)?(?:\\s+ser[áa])?\\s+(?:a\\s+|o\\s+|as\\s+|os\\s+)?(?:sua\\s+|seu\\s+)?(?:dist[âa]ncia(?:\\s+(?:total|percorrida|percorrido))?|deslocamento(?:\\s+(?:total|escalar|realizado|percorrido))?|velocidade(?:\\s+(?:escalar\\s+)?(?:m[ée]dia|final|inicial|atingida|alcan[çc]ada|adquirida|instant[âa]nea))?|acelera[çc][ãa]o(?:\\s+(?:escalar\\s+)?(?:m[ée]dia|uniforme|constante))?|posi[çc][ãa]o(?:\\s+\\$[a-zA-Z]\\$)?|tempo|instante(?:\\s+de\\s+tempo)?(?:\\s+\\$[a-zA-Z]\\$)?|metros|segundos?)\\b',
+  // "Determine/Calcule [a/o] <quantidade>"
+  '\\b(?:[Dd]etermine|[Cc]alcule|[Dd]eterminar|[Cc]alcular)\\s+(?:a\\s+|o\\s+|as\\s+|os\\s+)?(?:dist[âa]ncia(?:\\s+(?:total\\s+)?(?:percorrida|percorrido))?|deslocamento(?:\\s+(?:total|escalar))?|velocidade(?:\\s+(?:escalar\\s+)?(?:m[ée]dia|final|atingida|alcan[çc]ada|uniforme))?|acelera[çc][ãa]o(?:\\s+(?:escalar\\s+)?(?:m[ée]dia|uniforme|constante))?|posi[çc][ãa]o|tempo|instante(?:\\s+de\\s+tempo)?|metros|segundos?)\\b',
+  // "Quantos/Quantas <unidade>"
+  '\\b[Qq]uant(?:os|as)\\s+(?:metros|segundos?|minutos?)\\b',
+  // "quanto tempo"
+  '\\b[Qq]uanto\\s+tempo\\b',
+  // "Em que/qual instante [de tempo] [$var]"
+  '\\b[Ee]m\\s+(?:que|qual)\\s+instante(?:\\s+de\\s+tempo)?(?:\\s+\\$[a-zA-Z]\\$)?\\b',
+  // "Em qual posição [$var]"
+  '\\b[Ee]m\\s+qual\\s+posi[çc][ãa]o(?:\\s+\\$[a-zA-Z]\\$)?\\b',
+  // "Em quanto tempo"
+  '\\b[Ee]m\\s+quanto\\s+tempo\\b',
+  // "após quantos segundos"
+  '\\bap[óo]s\\s+quantos\\s+segundos\\b',
+  // (EXTRA) verbo interrogativo isolado
+  '\\b(?:[Dd]etermine|[Cc]alcule)\\b',
+  // (EXTRA) pronome interrogativo isolado
+  '\\b(?:[Qq]ual|[Qq]uais|[Oo]\\s+que|[Qq]uant[oa]s?)\\b'
+].join('|');
+
+// Detecta, dentro do bloco $...$, unidades que exigem conversão antes do cálculo.
+// Fica DENTRO do ramo "valor" do regex combinado (o bloco $...$ já foi capturado).
+const RE_CONVERSAO_UNIDADE =
+  /(?:km\s*\/\s*h|quil[ôo]metros?|minutos?|horas?)|\bmin\b|\bkm\b/i;
+
+const REGEX_DICAS_COMBINADO = new RegExp(
+  '(' + RE_INCOGNITA_STR + ')|(' + RE_VALOR_STR + ')|(' + RE_CHAVE_STR + ')',
+  'gi'
+);
+
+function aplicarDicas(enunciado) {
+  return enunciado.replace(REGEX_DICAS_COMBINADO, function (m, incognita, valor, chave) {
+    if (incognita) return '<span class="dica-incognita">' + incognita + '</span>';
+    if (valor) {
+      if (RE_CONVERSAO_UNIDADE.test(valor)) {
+        return '<span class="dica-conversao">' + valor + '</span>';
+      }
+      return '<span class="dica-valor">' + valor + '</span>';
+    }
+    if (chave) return '<span class="dica-chave">' + chave + '</span>';
+    return m;
+  });
 }
 
 // ===== GRÁFICOS E HISTÓRICO =====
@@ -1982,6 +2100,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const drawer = document.getElementById('painel-equacoes-prova');
       if (drawer) drawer.classList.remove('aberto');
     }
+	  // NOVO — toggle de dicas no enunciado
+    if (e.target.closest('#aba-dicas-prova')) {
+      dicasAtivasProva = !dicasAtivasProva;
+      atualizarInterfaceAvaliacao();
+	}
   });
 
   const observer = new MutationObserver(() => {
